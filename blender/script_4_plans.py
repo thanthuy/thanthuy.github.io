@@ -36,84 +36,85 @@ for f, a in [(S1, -200), (S2 - 1, 0),       # plan 1 : tourne (fini face logo)
     key(pivot, "rotation_euler", f, R(a), 2)
 ease(pivot)
 
-# ---------- câble plat rétractable (sort du chargeur, plan 3) ----------
+# ---------- on tire le câble Solid76 (plan 3) ----------
+# Solid76 = câble plat existant ; Solid78 + Solid84 = fiche USB-C rangée dans sa rainure.
 s.frame_set(S2); bpy.context.view_layer.update()      # rotation 0 = pose de repos
 import bmesh
-def catmull(pts, n=24):
-    P = [pts[0]] + pts + [pts[-1]]; out = []
-    for i in range(1, len(P) - 2):
-        p0, p1, p2, p3 = P[i-1], P[i], P[i+1], P[i+2]
-        for k in range(n):
-            u = k / n
-            out.append(0.5 * ((2*p1) + (-p0 + p2)*u + (2*p0 - 5*p1 + 4*p2 - p3)*u*u + (-p0 + 3*p1 - 3*p2 + p3)*u**3))
-    out.append(pts[-1]); return out
-ctrl = [Vector(v) for v in [(0.020,-0.008,-0.012),(0.020,-0.008,-0.035),(0.018,-0.012,-0.070),(0.035,-0.020,-0.108),
-        (0.075,-0.022,-0.120),(0.110,-0.016,-0.092),(0.124,-0.010,-0.040),(0.125,-0.006,0.020),(0.121,-0.002,0.058)]]
-dense = catmull(ctrl)
-cum = [0.0]
-for i in range(1, len(dense)): cum.append(cum[-1] + (dense[i] - dense[i-1]).length)
-TOT = cum[-1]; N = 240
-def at(L):
-    L = max(0.0, min(TOT, L))
-    for i in range(1, len(cum)):
-        if cum[i] >= L:
-            u = (L - cum[i-1]) / max(cum[i] - cum[i-1], 1e-9); return dense[i-1].lerp(dense[i], u)
-    return dense[-1]
-pts = [at(TOT * i / (N - 1)) for i in range(N)]       # points équidistants -> facteur = longueur
+mm = lambda x, y, z: Vector((x / 1000, y / 1000, z / 1000))
+cab = bpy.data.objects['Solid76']
+orig = cab.data; orig.use_fake_user = True; orig.name = "Solid76_forme_origine"   # géométrie d'origine gardée
+mat = orig.materials[0]
 
-cd = bpy.data.curves.new("Cable_Plat", 'CURVE'); cd.dimensions = '3D'; cd.twist_mode = 'MINIMUM'
-cd.extrude = 0.0019; cd.bevel_depth = 0.0006; cd.bevel_resolution = 3; cd.use_fill_caps = True
-cd.bevel_factor_mapping_end = 'SPLINE'
-sp = cd.splines.new('POLY'); sp.points.add(N - 1)
-for i, p in enumerate(pts): sp.points[i].co = (p.x, p.y, p.z, 1); sp.points[i].tilt = 0.0
-cable_obj = bpy.data.objects.new("Cable_Plat", cd); coll.objects.link(cable_obj)
-m_cab = bpy.data.materials.new("Cable_Plat_Blanc"); m_cab.use_nodes = True
-bs = m_cab.node_tree.nodes['Principled BSDF']; bs.inputs['Base Color'].default_value = (0.85, 0.85, 0.87, 1); bs.inputs['Roughness'].default_value = 0.3
-cd.materials.append(m_cab)
+# trajet (repos = forme en L d'origine de Solid76)
+A, B, C, D = mm(-5.4, -20.9, -7.8), mm(-17.0, -20.9, -7.1), mm(-20.3, -20.9, -4.6), mm(-20.3, -20.9, -1.7)
+cd = bpy.data.curves.new("Trajet_Solid76", 'CURVE'); cd.dimensions = '3D'
+cd.use_path = True; cd.use_stretch = True; cd.use_deform_bounds = True; cd.twist_mode = 'Z_UP'
+sp = cd.splines.new('BEZIER'); sp.bezier_points.add(3)
+for bp, p in zip(sp.bezier_points, (A, B, C, D)):
+    bp.co = p; bp.handle_left_type = bp.handle_right_type = 'AUTO'
+path = bpy.data.objects.new("Trajet_Solid76", cd); coll.objects.link(path); path.hide_render = True
+path.parent = pivot; path.matrix_parent_inverse = pivot.matrix_world.inverted()
 
-# fiche USB-C (origine = jonction câble, longueur vers +Z local)
-def box(bm, sx, sy, z0, z1):
-    bmesh.ops.create_cube(bm, size=1.0)
-    for v in bm.verts:
-        if not v.tag:
-            v.co = Vector((v.co.x * sx, v.co.y * sy, z0 + (v.co.z + 0.5) * (z1 - z0))); v.tag = True
-def plug_part(name, sx, sy, z0, z1, mat, bev):
-    me = bpy.data.meshes.new(name); bm = bmesh.new(); box(bm, sx, sy, z0, z1); bm.to_mesh(me); bm.free()
-    o = bpy.data.objects.new(name, me); coll.objects.link(o); me.materials.append(mat)
-    md = o.modifiers.new("Bevel", 'BEVEL'); md.width = bev; md.segments = 4
-    o.modifiers.new("Smooth", 'WEIGHTED_NORMAL'); return o
-m_al = bpy.data.materials.new("USBC_Aluminium"); m_al.use_nodes = True
-b2 = m_al.node_tree.nodes['Principled BSDF']; b2.inputs['Base Color'].default_value = (0.8, 0.8, 0.82, 1)
-b2.inputs['Metallic'].default_value = 1.0; b2.inputs['Roughness'].default_value = 0.22
-m_bl = bpy.data.materials.new("USBC_Interieur"); m_bl.use_nodes = True
-m_bl.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value = (0.01, 0.01, 0.01, 1)
-plug = bpy.data.objects.new("Fiche_USB_C", None); plug.empty_display_size = 0.01; coll.objects.link(plug)
-for o in [plug_part("USBC_Gaine", 0.0062, 0.0026, 0.0, 0.007, m_cab, 0.0009),
-          plug_part("USBC_Corps", 0.0078, 0.0034, 0.006, 0.019, m_al, 0.0012),
-          plug_part("USBC_Embout", 0.0083, 0.0026, 0.019, 0.0275, m_al, 0.0011),
-          plug_part("USBC_Languette", 0.0060, 0.0010, 0.0245, 0.0277, m_bl, 0.0003)]:
-    o.parent = plug
+# Solid76 devient une bande droite (même section 5 x 1,2 mm, même matériau) déformée le long du trajet
+W, T, NS = 0.0050, 0.0012, 300
+me = bpy.data.meshes.new("Solid76"); bm = bmesh.new()
+rows = []
+for i in range(NS + 1):
+    x = i / NS
+    rows.append([bm.verts.new((x, y, z)) for y, z in ((-W/2, -T/2), (W/2, -T/2), (W/2, T/2), (-W/2, T/2))])
+for i in range(NS):
+    for k in range(4):
+        bm.faces.new((rows[i][k], rows[i][(k+1) % 4], rows[i+1][(k+1) % 4], rows[i+1][k]))
+bm.faces.new(rows[0][::-1]); bm.faces.new(rows[-1])
+bm.to_mesh(me); bm.free()
+for poly in me.polygons: poly.use_smooth = True
+me.materials.append(mat)
+cab.data = me
+cab.matrix_world = path.matrix_world.copy()
+md = cab.modifiers.new("Tirer_Cable", 'CURVE'); md.object = path; md.deform_axis = 'POS_X'
+bev = cab.modifiers.new("Bevel", 'BEVEL'); bev.width = 0.0004; bev.segments = 2
 
-for o in (cable_obj, plug):
-    o.parent = pivot; o.matrix_parent_inverse = pivot.matrix_world.inverted()
+# fiche : Solid78 + Solid84 sur un Empty à la base de la fiche (axe +Z)
+plug = bpy.data.objects.new("Fiche_Solid78", None); plug.empty_display_size = 0.01; coll.objects.link(plug)
+plug.location = D; plug.parent = pivot; plug.matrix_parent_inverse = pivot.matrix_world.inverted()
+bpy.context.view_layer.update()
+for n in ("Solid78", "Solid84"):
+    o = bpy.data.objects[n]; mw = o.matrix_world.copy()
+    o.parent = plug; o.matrix_parent_inverse = plug.matrix_world.inverted(); o.matrix_world = mw
 
-O0, O1 = S3 + 8, S3 + 52                                 # sortie du câble
+O0, O1 = S3 + 6, S3 + 50
+D1 = mm(-40.0, -22.0, -1.7)                  # fiche sortie de sa rainure (vers -X)
+DF = mm(-62.0, -36.0, 58.0)                  # position finale, en haut à gauche
+M0, MF = C, mm(-62.0, -32.0, -6.0)          # milieu du câble : forme un arc
+AX0, AXF = Vector((0, 0, 1)), Vector((-0.35, -0.15, 1)).normalized()
 def smooth(u): u = max(0.0, min(1.0, u)); return u * u * (3 - 2 * u)
+def bez(p0, p1, p2, u): return (1-u)**2 * p0 + 2*(1-u)*u * p1 + u*u * p2
 prev = None
 for f in range(S1, END + 1):
-    u = smooth((f - O0) / (O1 - O0)); L = 0.004 + u * (TOT - 0.004)
-    cd.bevel_factor_end = L / TOT; cd.keyframe_insert("bevel_factor_end", frame=f)
-    p = at(L); tng = (at(L + 0.002) - at(L - 0.002)).normalized()
-    plug.location = p; plug.keyframe_insert("location", frame=f)
-    e = tng.to_track_quat('Z', 'Y').to_euler('XYZ', prev) if prev else tng.to_track_quat('Z', 'Y').to_euler()
+    u = smooth((f - O0) / (O1 - O0))
+    if u < 0.25:
+        v = u / 0.25; d = D.lerp(D1, smooth(v)); m = C.lerp(C + (D1 - D) * 0.6, smooth(v)); ax = AX0
+    else:
+        v = smooth((u - 0.25) / 0.75)
+        d = bez(D1, mm(-75.0, -32.0, 5.0), DF, v)
+        m = (C + (D1 - D) * 0.6).lerp(MF, v)
+        ax = AX0.slerp(AXF, v) if hasattr(AX0, "slerp") else AX0.lerp(AXF, v).normalized()
+    pts = sp.bezier_points
+    P = [A, B, m, d]
+    tg = [(B - A).normalized(), (m - A).normalized(), (d - B).normalized(), ax]
+    for i, bp in enumerate(pts):
+        bp.handle_left_type = bp.handle_right_type = 'FREE'
+        bp.co = P[i]
+        ll = (P[i] - P[i-1]).length / 3 if i > 0 else 0.002
+        lr = (P[i+1] - P[i]).length / 3 if i < 3 else 0.002
+        bp.handle_left = P[i] - tg[i] * ll; bp.handle_right = P[i] + tg[i] * lr
+        for prop in ("co", "handle_left", "handle_right"): bp.keyframe_insert(prop, frame=f)
+    plug.location = d; plug.keyframe_insert("location", frame=f)
+    e = AX0.rotation_difference(ax).to_euler('XYZ', prev) if prev else AX0.rotation_difference(ax).to_euler()
     plug.rotation_euler = e; prev = e.copy(); plug.keyframe_insert("rotation_euler", frame=f)
 for idb in (cd, plug):
     for fc in fcurves(idb):
         for kp in fc.keyframe_points: kp.interpolation = 'LINEAR'
-for o in [cable_obj, plug] + list(plug.children):                  # rangé = invisible avant le plan 3
-    o.hide_render = True; o.keyframe_insert("hide_render", frame=S1)
-    o.hide_render = False; o.keyframe_insert("hide_render", frame=O0)
-print("cable length", TOT)
 
 # ---------- 4 caméras ----------
 def cam(name, lens):
@@ -141,15 +142,15 @@ aim(c2, S2, orbit(LOGO, 0.40, 6, 4), LOGO)
 aim(c2, S2 + 40, orbit(LOGO, 0.36, 0, 1), LOGO)
 aim(c2, S3 - 1, orbit(C, 0.62, -6, 8), C)            # dézoom
 
-CAB = Vector((0.045, -0.012, -0.022))
+CAB = Vector((-0.022, -0.02, 0.012))
 c3 = cam("Cam3_Cable", 85)
-aim(c3, S3, orbit(CAB, 0.74, 14, 10), CAB)
-aim(c3, S4 - 1, orbit(CAB, 0.90, 4, 8), CAB)
+aim(c3, S3, orbit(CAB, 0.55, -24, 10), CAB)
+aim(c3, S4 - 1, orbit(CAB, 0.62, -14, 8), CAB)
 
-MID = Vector((0.012, -0.010, -0.055))
+MID = Vector((-0.03, -0.010, -0.045))
 c4 = cam("Cam4_Final", 85)
-aim(c4, S4, orbit(MID, 0.80, 15, 10), MID)
-aim(c4, END, orbit(MID, 1.08, 5, 12), MID)
+aim(c4, S4, orbit(MID, 0.70, 0, 10), MID)
+aim(c4, END, orbit(MID, 1.00, -8, 12), MID)
 for c in (c1, c2, c3, c4): ease(c)
 
 # marqueurs = changement de caméra
